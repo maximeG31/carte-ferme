@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Carte Fermes</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link href="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.css" rel="stylesheet" />
+  <style>
+    body, html { margin:0; padding:0; height:100%; }
+    #map { width: 100%; height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
+  <script>
+    const AIRTABLE_API_KEY = "patSRJuwnnjbBn5G4.55ba382e861b870ff63b880217f3a6898338fb67087bc8a5e9892a1aed56c2bd ";
+    const AIRTABLE_BASE_ID = "appQl0U3oiBdil3Y8";
+    const AIRTABLE_TABLE_NAME = "Fermes";
+
+    // Initialiser la carte MapLibre centrée sur France
+    const map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://demotiles.maplibre.org/style.json',
+      center: [2.2137, 46.2276], // Longitude, Latitude France
+      zoom: 5
+    });
+
+    // Fonction pour récupérer les données Airtable
+    async function fetchAirtableData() {
+      const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(AIRTABLE_TABLE_NAME)}?pageSize=100`;
+
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${AIRTABLE_API_KEY}`
+        }
+      });
+
+      const data = await response.json();
+      return data.records;
+    }
+
+    // Ajouter un marker sur la carte
+    function addMarker(lon, lat, popupText) {
+      const marker = new maplibregl.Marker()
+        .setLngLat([lon, lat])
+        .setPopup(new maplibregl.Popup().setText(popupText))
+        .addTo(map);
+    }
+
+    // Géocodage simple via API Nominatim (OpenStreetMap)
+    async function geocode(address) {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
+      const resp = await fetch(url);
+      const results = await resp.json();
+      if (results.length > 0) {
+        return {
+          lat: parseFloat(results[0].lat),
+          lon: parseFloat(results[0].lon)
+        };
+      }
+      return null;
+    }
+
+    // Main
+    async function init() {
+  const records = await fetchAirtableData();
+  console.log("Données Airtable récupérées :", records);
+
+  for (const record of records) {
+    const fields = record.fields;
+    console.log(fields);  // Voir chaque ligne
+
+    let lat, lon;
+
+    if (fields.Latitude && fields.Longitude) {
+      lat = parseFloat(fields.Latitude);
+      lon = parseFloat(fields.Longitude);
+    } else if (fields.Adresse) {
+      const coords = await geocode(fields.Adresse);
+      if (!coords) {
+        console.warn("Adresse introuvable:", fields.Adresse);
+        continue;
+      }
+      lat = coords.lat;
+      lon = coords.lon;
+    } else {
+      console.warn("Pas d'adresse ni coordonnées pour :", fields);
+      continue;
+    }
+
+    addMarker(lon, lat, fields["Nom de la ferme"] || "Ferme sans nom");
+  }
+}
+
+
+    init();
+  </script>
+</body>
+</html>
