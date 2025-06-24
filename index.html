@@ -8,106 +8,130 @@
   <style>
     body, html { margin:0; padding:0; height:100%; }
     #map { width: 100%; height: 100vh; }
+    #loading {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: white;
+      padding: 10px 20px;
+      border-radius: 5px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+      z-index: 999;
+      font-family: sans-serif;
+    }
   </style>
 </head>
 <body>
+  <div id="loading">Veuillez patienter, chargement de la carte...</div>
   <div id="map"></div>
 
   <script src="https://unpkg.com/maplibre-gl@2.4.0/dist/maplibre-gl.js"></script>
   <script>
-    const AIRTABLE_API_KEY = "patSRJuwnnjbBn5G4.55ba382e861b870ff63b880217f3a6898338fb67087bc8a5e9892a1aed56c2bd ";
+    const AIRTABLE_API_KEY = "patSRJuwnnjbBn5G4.55ba382e861b870ff63b880217f3a6898338fb67087bc8a5e9892a1aed56c2bd";
     const AIRTABLE_BASE_ID = "appQl0U3oiBdil3Y8";
-    const AIRTABLE_TABLE_NAME = "Fermes";
+    const TABLE_FERMES = "Fermes";
+    const TABLE_PRODUITS = "Produits";
+    const TABLE_LAIT = "Type de lait";
 
-    // Initialiser la carte MapLibre centrée sur France
     const map = new maplibregl.Map({
       container: 'map',
-      style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json', 
-      center: [2.2137, 46.2276], // Longitude, Latitude France
+      style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+      center: [2.2137, 46.2276],
       zoom: 5
     });
 
-    // Fonction pour récupérer les données Airtable
-    async function fetchAirtableData() {
-      const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(AIRTABLE_TABLE_NAME)}?pageSize=100`;
-
+    async function fetchAirtableTable(tableName) {
+      const url = `https://api.airtable.com/v0/${AIRTABLE_BASE_ID}/${encodeURIComponent(tableName)}?pageSize=100`;
       const response = await fetch(url, {
-        headers: {
-          Authorization: `Bearer ${AIRTABLE_API_KEY}`
-        }
+        headers: { Authorization: `Bearer ${AIRTABLE_API_KEY}` }
       });
-
+      if (!response.ok) {
+        throw new Error(`Erreur HTTP ${response.status} pour la table ${tableName}`);
+      }
       const data = await response.json();
       return data.records;
     }
 
-    // Ajouter un marker sur la carte
-    function addMarker(lon, lat, popupText) {
-      const marker = new maplibregl.Marker()
+    function addMarker(lon, lat, htmlContent) {
+      new maplibregl.Marker()
         .setLngLat([lon, lat])
-        .setPopup(new maplibregl.Popup().setText(popupText))
+        .setPopup(new maplibregl.Popup().setHTML(htmlContent))
         .addTo(map);
     }
 
-    // Géocodage simple via API Nominatim (OpenStreetMap)
     async function geocode(address) {
       const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
       const resp = await fetch(url);
       const results = await resp.json();
       if (results.length > 0) {
-        return {
-          lat: parseFloat(results[0].lat),
-          lon: parseFloat(results[0].lon)
-        };
+        return { lat: parseFloat(results[0].lat), lon: parseFloat(results[0].lon) };
       }
       return null;
     }
 
-    // Main
     async function init() {
-      const records = await fetchAirtableData();
-      console.log("Données Airtable récupérées :", records);
+      const loadingEl = document.getElementById('loading');
 
-      // Créer les bounds pour inclure tous les points
-      const bounds = new maplibregl.LngLatBounds();
+      try {
+        const fermes = await fetchAirtableTable(TABLE_FERMES);
+        const produits = await fetchAirtableTable(TABLE_PRODUITS);
+        const laitTypes = await fetchAirtableTable(TABLE_LAIT);
 
-      for (const record of records) {
-        const fields = record.fields;
-        console.log(fields);
+        const produitsDict = {};
+        produits.forEach(r => produitsDict[r.id] = r.fields["Nom du produit"] || "Produit inconnu");
 
-        let lat, lon;
+        const laitDict = {};
+        laitTypes.forEach(r => laitDict[r.id] = r.fields.Nom || r.fields.Name || "Type de lait inconnu");
 
-        if (fields.Latitude && fields.Longitude) {
-          lat = parseFloat(fields.Latitude);
-          lon = parseFloat(fields.Longitude);
-        } else if (fields.Adresse) {
-          const coords = await geocode(fields.Adresse);
-          if (!coords) {
-            console.warn("Adresse introuvable:", fields.Adresse);
+        const bounds = new maplibregl.LngLatBounds();
+
+        for (const ferme of fermes) {
+          const fields = ferme.fields;
+
+          let lat, lon;
+          if (fields.Latitude && fields.Longitude) {
+            lat = parseFloat(fields.Latitude);
+            lon = parseFloat(fields.Longitude);
+          } else if (fields.Adresse) {
+            const coords = await geocode(fields.Adresse);
+            if (!coords) {
+              console.warn("Adresse introuvable:", fields.Adresse);
+              continue;
+            }
+            lat = coords.lat;
+            lon = coords.lon;
+          } else {
+            console.warn("Pas d'adresse ni coordonnées pour :", fields);
             continue;
           }
-          lat = coords.lat;
-          lon = coords.lon;
-        } else {
-          console.warn("Pas d'adresse ni coordonnées pour :", fields);
-          continue;
+
+          const produitsList = (fields.Produits || []).map(id => produitsDict[id]).filter(Boolean);
+          const laitList = (fields["Type de lait"] || []).map(id => laitDict[id]).filter(Boolean);
+
+          const popupHTML = `
+            <strong>${fields["Nom de la ferme"] || "Ferme sans nom"}</strong><br>
+            <b>Produits:</b> ${produitsList.length > 0 ? produitsList.join(", ") : "Aucun"}<br>
+            <b>Type de lait:</b> ${laitList.length > 0 ? laitList.join(", ") : "Aucun"}
+          `;
+
+          addMarker(lon, lat, popupHTML);
+          bounds.extend([lon, lat]);
         }
 
-        addMarker(lon, lat, fields["Nom de la ferme"] || "Ferme sans nom");
+        if (!bounds.isEmpty()) {
+          map.fitBounds(bounds, { padding: 50 });
+        } else {
+          console.warn("Aucun point à afficher sur la carte");
+        }
 
-        // Étendre les limites pour inclure ce point
-        bounds.extend([lon, lat]);
-      }
-
-      // Ajuster la vue pour englober tous les marqueurs avec un padding
-      if (!bounds.isEmpty()) {
-        map.fitBounds(bounds, { padding: 50 });
-      } else {
-        console.warn("Aucun point à afficher sur la carte");
+      } catch (error) {
+        console.error("Erreur lors de l'initialisation :", error);
+      } finally {
+        // Retire le message de chargement
+        if (loadingEl) loadingEl.style.display = 'none';
       }
     }
-
-
 
     init();
   </script>
