@@ -53,8 +53,8 @@
       return data.records;
     }
 
-    function addMarker(lon, lat, htmlContent, color = "#3FB1CE") {
-      new maplibregl.Marker({ color })
+    function createMarker(lon, lat, htmlContent, color = "#3FB1CE") {
+      return new maplibregl.Marker({ color })
         .setLngLat([lon, lat])
         .setPopup(new maplibregl.Popup().setHTML(htmlContent))
         .addTo(map);
@@ -92,9 +92,6 @@
           const produitsList = (fields.Produits || []).map(id => produitsDict[id]).filter(Boolean);
           const laitList = (fields["Type de lait"] || []).map(id => laitDict[id]).filter(Boolean);
 
-          // -----------------------------
-          // Géocoder ou utiliser coords
-          // -----------------------------
           let fermeCoords = null;
           let fromagerieCoords = null;
 
@@ -110,7 +107,9 @@
             continue;
           }
 
-          // Marqueur FERME
+          let fermeMarker = null;
+          let fromagerieMarker = null;
+
           if (fermeCoords) {
             const popupHTML = `
               <strong>${fields["Nom de la ferme"] || "Ferme sans nom"}</strong><br>
@@ -119,11 +118,10 @@
               <b>Type de lait :</b> ${laitList.join(", ") || "Aucun"}<br>
               ${fromagerieCoords ? "<i>Fromagerie associée disponible</i>" : ""}
             `;
-            addMarker(fermeCoords.lon, fermeCoords.lat, popupHTML, "#3FB1CE");
+            fermeMarker = createMarker(fermeCoords.lon, fermeCoords.lat, popupHTML, "#3FB1CE");
             bounds.extend([fermeCoords.lon, fermeCoords.lat]);
           }
 
-          // Marqueur FROMAGERIE
           if (fromagerieCoords) {
             const popupHTML = `
               <strong>${fields["Nom de la ferme"] || "Ferme sans nom"}</strong><br>
@@ -132,41 +130,55 @@
               <b>Type de lait :</b> ${laitList.join(", ") || "Aucun"}<br>
               ${fermeCoords ? "<i>Ferme associée disponible</i>" : ""}
             `;
-            addMarker(fromagerieCoords.lon, fromagerieCoords.lat, popupHTML, "#FF6600");
+            fromagerieMarker = createMarker(fromagerieCoords.lon, fromagerieCoords.lat, popupHTML, "#FF6600");
             bounds.extend([fromagerieCoords.lon, fromagerieCoords.lat]);
           }
 
-          // Dessiner une ligne entre les 2 s'il y a les deux
-          if (fermeCoords && fromagerieCoords) {
-            const lineId = "line-" + ferme.id;
+          const lineId = `line-${ferme.id}`;
 
-            map.on('load', () => {
-              if (!map.getSource(lineId)) {
-                map.addSource(lineId, {
-                  type: 'geojson',
-                  data: {
-                    type: 'Feature',
-                    geometry: {
-                      type: 'LineString',
-                      coordinates: [
-                        [fermeCoords.lon, fermeCoords.lat],
-                        [fromagerieCoords.lon, fromagerieCoords.lat]
-                      ]
-                    }
-                  }
-                });
-
-                map.addLayer({
-                  id: lineId,
-                  type: 'line',
-                  source: lineId,
-                  paint: {
-                    'line-color': '#FF6600',
-                    'line-width': 2
-                  }
-                });
+          function addLine() {
+            if (map.getSource(lineId)) return;
+            map.addSource(lineId, {
+              type: 'geojson',
+              data: {
+                type: 'Feature',
+                geometry: {
+                  type: 'LineString',
+                  coordinates: [
+                    [fermeCoords.lon, fermeCoords.lat],
+                    [fromagerieCoords.lon, fromagerieCoords.lat]
+                  ]
+                }
               }
             });
+
+            map.addLayer({
+              id: lineId,
+              type: 'line',
+              source: lineId,
+              paint: {
+                'line-color': '#FF6600',
+                'line-width': 2
+              }
+            });
+          }
+
+          function removeLine() {
+            if (map.getLayer(lineId)) {
+              map.removeLayer(lineId);
+            }
+            if (map.getSource(lineId)) {
+              map.removeSource(lineId);
+            }
+          }
+
+          if (fermeMarker && fromagerieCoords) {
+            fermeMarker.getPopup().on('open', addLine);
+            fermeMarker.getPopup().on('close', removeLine);
+          }
+          if (fromagerieMarker && fermeCoords) {
+            fromagerieMarker.getPopup().on('open', addLine);
+            fromagerieMarker.getPopup().on('close', removeLine);
           }
         }
 
