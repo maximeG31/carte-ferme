@@ -98,8 +98,8 @@
           if (fields.Adresse) {
             fermeCoords = await geocode(fields.Adresse);
           }
-          if (fields["Adresse bis"]) {
-            fromagerieCoords = await geocode(fields["Adresse bis"]);
+          if (fields["Adresse fromagerie"]) {
+            fromagerieCoords = await geocode(fields["Adresse fromagerie"]);
           }
 
           if (!fermeCoords && !fromagerieCoords) {
