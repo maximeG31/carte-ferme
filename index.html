@@ -53,8 +53,8 @@
       return data.records;
     }
 
-    function addMarker(lon, lat, htmlContent) {
-      new maplibregl.Marker()
+    function addMarker(lon, lat, htmlContent, color = "#3FB1CE") {
+      new maplibregl.Marker({ color })
         .setLngLat([lon, lat])
         .setPopup(new maplibregl.Popup().setHTML(htmlContent))
         .addTo(map);
@@ -89,34 +89,85 @@
         for (const ferme of fermes) {
           const fields = ferme.fields;
 
-          let lat, lon;
-          if (fields.Latitude && fields.Longitude) {
-            lat = parseFloat(fields.Latitude);
-            lon = parseFloat(fields.Longitude);
-          } else if (fields.Adresse) {
-            const coords = await geocode(fields.Adresse);
-            if (!coords) {
-              console.warn("Adresse introuvable:", fields.Adresse);
-              continue;
-            }
-            lat = coords.lat;
-            lon = coords.lon;
-          } else {
-            console.warn("Pas d'adresse ni coordonnées pour :", fields);
-            continue;
-          }
-
           const produitsList = (fields.Produits || []).map(id => produitsDict[id]).filter(Boolean);
           const laitList = (fields["Type de lait"] || []).map(id => laitDict[id]).filter(Boolean);
 
-          const popupHTML = `
-            <strong>${fields["Nom de la ferme"] || "Ferme sans nom"}</strong><br>
-            <b>Produits:</b> ${produitsList.length > 0 ? produitsList.join(", ") : "Aucun"}<br>
-            <b>Type de lait:</b> ${laitList.length > 0 ? laitList.join(", ") : "Aucun"}
-          `;
+          // -----------------------------
+          // Géocoder ou utiliser coords
+          // -----------------------------
+          let fermeCoords = null;
+          let fromagerieCoords = null;
 
-          addMarker(lon, lat, popupHTML);
-          bounds.extend([lon, lat]);
+          if (fields.Adresse) {
+            fermeCoords = await geocode(fields.Adresse);
+          }
+          if (fields["Adresse bis"]) {
+            fromagerieCoords = await geocode(fields["Adresse bis"]);
+          }
+
+          if (!fermeCoords && !fromagerieCoords) {
+            console.warn("Aucune adresse pour :", fields["Nom de la ferme"]);
+            continue;
+          }
+
+          // Marqueur FERME
+          if (fermeCoords) {
+            const popupHTML = `
+              <strong>${fields["Nom de la ferme"] || "Ferme sans nom"}</strong><br>
+              <b>Type :</b> Ferme<br>
+              <b>Produits :</b> ${produitsList.join(", ") || "Aucun"}<br>
+              <b>Type de lait :</b> ${laitList.join(", ") || "Aucun"}<br>
+              ${fromagerieCoords ? "<i>Fromagerie associée disponible</i>" : ""}
+            `;
+            addMarker(fermeCoords.lon, fermeCoords.lat, popupHTML, "#3FB1CE");
+            bounds.extend([fermeCoords.lon, fermeCoords.lat]);
+          }
+
+          // Marqueur FROMAGERIE
+          if (fromagerieCoords) {
+            const popupHTML = `
+              <strong>${fields["Nom de la ferme"] || "Ferme sans nom"}</strong><br>
+              <b>Type :</b> Fromagerie<br>
+              <b>Produits :</b> ${produitsList.join(", ") || "Aucun"}<br>
+              <b>Type de lait :</b> ${laitList.join(", ") || "Aucun"}<br>
+              ${fermeCoords ? "<i>Ferme associée disponible</i>" : ""}
+            `;
+            addMarker(fromagerieCoords.lon, fromagerieCoords.lat, popupHTML, "#FF6600");
+            bounds.extend([fromagerieCoords.lon, fromagerieCoords.lat]);
+          }
+
+          // Dessiner une ligne entre les 2 s'il y a les deux
+          if (fermeCoords && fromagerieCoords) {
+            const lineId = "line-" + ferme.id;
+
+            map.on('load', () => {
+              if (!map.getSource(lineId)) {
+                map.addSource(lineId, {
+                  type: 'geojson',
+                  data: {
+                    type: 'Feature',
+                    geometry: {
+                      type: 'LineString',
+                      coordinates: [
+                        [fermeCoords.lon, fermeCoords.lat],
+                        [fromagerieCoords.lon, fromagerieCoords.lat]
+                      ]
+                    }
+                  }
+                });
+
+                map.addLayer({
+                  id: lineId,
+                  type: 'line',
+                  source: lineId,
+                  paint: {
+                    'line-color': '#FF6600',
+                    'line-width': 2
+                  }
+                });
+              }
+            });
+          }
         }
 
         if (!bounds.isEmpty()) {
@@ -128,7 +179,6 @@
       } catch (error) {
         console.error("Erreur lors de l'initialisation :", error);
       } finally {
-        // Retire le message de chargement
         if (loadingEl) loadingEl.style.display = 'none';
       }
     }
